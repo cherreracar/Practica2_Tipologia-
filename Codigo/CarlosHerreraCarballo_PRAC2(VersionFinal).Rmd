@@ -1,0 +1,755 @@
+---
+title: "Práctica 2 Tipología y ciclo de vida de los datos"
+author: "Carlos Herrera Carballo"
+date: '`r format(Sys.Date(),"%e de %B, %Y")`'
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+#bibliography: scholar.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, include=FALSE}
+library(knitr)
+library(missForest)
+library(plyr)
+library(dplyr)
+library(nortest)
+library(car)
+library(corrplot)
+library(caret)
+```
+
+# 1 Descripción del dataset. ¿Por qué es importante y qué pregunta/problema pretende responder?
+
+La crisis sanitaria mundial producida por el COVID-19 ha provocado un incremento sin precedentes en el número de contrataciones de seguros médicos privados por parte de la población. Si particularizamos este hecho en España, se tiene que en 2020 hay 469.750 asegurados más que en 2019 [1]. De este modo, en este contexto social surge la necesidad de desarrollar herramientas que, por medio del uso de la Ciencia de Datos, faciliten a la población la toma de decisiones a la hora de escoger un seguro de salud privado y que dicha decisión sea informada con resultados precisos. 
+Por lo tanto, el dataset escogido para esta actividad tiene relevada importancia, pues constituye una colección de datos sociodemográficos de ciudadanos estadounidenses a partir de los cuáles y, con el uso de distintas pruebas estadísticas, nos permitirán conocer la relación de estas variables con el costo final de este tipo de seguros privados. Además, también podremos explorar las diferencias en el precio final del seguro en función del sexo de la persona asegurada, así como de la zona de residencia del mismo. 
+
+El conjunto de datos ha sido extraído de la página web www.kaggle.com [2] y está conformado por un total de 1338 observaciones y las 7 variables que definimos a continuación:
+
+- **Age**: Edad del beneficiario principal del seguro médico contratado.
+
+- **Sex**: Género del beneficiario principal del seguro médico contratado. (Female, Male)
+
+- **bmi**: Índice de masa coporal del beneficiario principal del seguro médico contratado.
+
+- **Children**: Número de niños del beneficiario principal del seguro médico contratado cubiertos por dicho seguro.
+
+- **Smoker**: Condición de fumador o no fumador del beneficiario principal del seguro médico contratado. (Yes, No)
+
+- **Region**: Área residencial del beneficiario principal del seguro médico contratado en EEUU. (northeast, southeast, southwest, northwest)
+
+- **Charges**: Costes médicos anuales e individuales facturados por el seguro médico contratado.
+
+
+Referencias del apartado 1:
+
+**[1]** https://www.infolibre.es/noticias/politica/2021/04/29/los_seguros_privados_rompen_sus_records_2020_superan_los_millones_clientes_los_000_millones_facturacion_118757_1012.html
+
+**[2]** https://www.kaggle.com/mirichoi0218/insurance
+
+# 2. Integración y selección de los datos de interés a analizar.
+
+En primer lugar, comenzamos cargando el fichero de datos cuya extensión es de tipo csv, creando así un dataset con las variables de interés. En este caso, seleccionaremos las siete variables que componen este conjunto de datos pues todas serán necesarias para las pruebas estadísticas que realizaremos posteriormente.
+
+
+```{r}
+# Carga del conjunto de datos escogido.
+dataset <- read.csv("insurance.csv",
+                    stringsAsFactors = FALSE,
+                    fileEncoding = "UTF-8",
+                     sep = ",")
+```
+
+
+En segundo lugar, procedemos a examinar el tipo de datos con los que R ha interpretado cada variable. En este sentido, observamos que tenemos tres variables de tipo caracter (sex, region y smoker) y cuatro variables numéricas (age, children, bmi y charges).
+
+
+```{r}
+# Visualización de la estructura del dataset.
+str(dataset)
+```
+  
+Para finalizar este apartado, extraemos una estadística descriptiva de nuestro conjunto de datos para obtener una primera descripción de los datos cargados:
+
+```{r}
+# Estadística descriptiva del dataset.
+summary(dataset)
+
+# Variables no numéricas
+table(dataset$sex)
+table(dataset$smoker)
+table(dataset$region)
+```
+  
+De este modo, podemos ver que estamos tratando con datos de personas adultas, puesto que el rango de edades comprendidas en la muestra van desde los 18 hasta los 64 años. Asimismo, el número de hombres y mujeres en la muestra es similar, pues contamos con un total de 662 mujeres y 676 hombres. Además, también son similares la cantidad de individuos para cada región. No obstante, encontramos mayor diferencia entre el número de personas no fumadoras (1064) y el número de personas si fumadoras (274). 
+
+Por otra parte, la variable children tiene como valor máximo 5 (5 hijos) y mínimo 0 (asuencia de hijos por parte del asegurado), mientras que el índice de masa corporal tiene unos valores comprendidos entre 15,96 y 53,13. Finalmente, comentar que el seguro más barato de la muestra tiene un costo de 1122 dólares, mientras que el más caro es de 63770 dólares.
+
+# 3. Limpieza de los datos.
+
+## 3.1. ¿Los datos contienen ceros o elementos vacíos? ¿Cómo gestionarías cada uno de estos casos?
+
+Primero, verifiquemos si existen elementos vacíos en alguna de las variables de nuestro dataset:
+
+```{r}
+# Estadísticas de valores vacíos
+colSums(is.na(dataset))
+```
+
+Como podemos ver, no existen elementos vacíos en el conjunto de datos. No obstante, vamos a describir cómo actuaríamos en el caso de que existiesen.
+
+En el caso de tener valores vacíos en las variables de texto (smoker, region y sex) una posible imputación de estos valores sería sustituir el valor faltante por la moda de la variable en cuestión. Asimismo, en el caso de variables discretas, tales como la edad y el número de hijos, se puede proceder sustituyendo los valores faltantes por la mediana de estas variables. Finalmente, en el caso de las variables continuas (bmi y charges) se puede proceder sustituyendo los valores vacíos por las medias aritméticas de dichas variables. 
+
+Por otra parte, dada la naturaleza de este conjunto de datos en el que hay presencia de variables mixtas (numéricas y de texto), aparte de la sustitución por medidas centrales que acabamos de mencionar, también podemos imputar los valores perdidos con técnicas más sofisticadas como podría ser el algoritmo missForest, ya que resulta un método apto y robusto para la tipología del conjunto de datos usado.
+
+
+## 3.2. Identificación y tratamiento de valores extremos.
+
+A continuación, llevaremos a cabo la identificación de valores extremos en cada una de las variables suceptibles a la presencia de valores atípicos. Para ello, realizaremos gráficos de cajas para localizar estos valores atípicos para luego debatir qué tipo de tratamiento es el más adecuado (en caso de que dichos valores necesiten tratramiento).
+
+En primer lugar, observamos que la variable edad no tiene ningún valor outlier.
+
+```{r}
+# Boxplot variable age
+age.bp <- boxplot(dataset$age)
+```
+En segundo lugar, observamos que la variable bmi (índice de masa corporal) presenta un total de 9 valores extremos que superan el valor 40, a partir del cual, se considera que un paciente sufre obesidad mórbida. En este sentido, estos valores pueden ser perfectamente legítimos en el caso de que estos individuos padezcan esta enfermedad, además, debemos tener en cuenta que se trata de una muestra tomada en EEUU donde los índices de obesidad en la población son altos y, también, las características genéticas de los habitantes pueden ser perfectamente compatibles con estos valores en el índice de masa corporal. 
+
+Por otra parte,  también debemos considerar que esta afectación trae consigo otras complicaciones de salud (enfermedades cardíacas, accidentes cerebrovasculares, diabetes, etc.) para el paciente que tienen influencia en el precio final de un posible seguro médico que quiera contratar. Por estos motivos, tomaremos la decisión de mantener estos valores extremos en el conjunto de datos a estudiar, pues pueden resultar valiosos para conocer el impacto de esta condición en el precio final de un seguro privado de atención sanitaria.
+
+
+
+```{r}
+# Boxplot variable bmi
+bmi.bp <- boxplot(dataset$bmi)
+bmi.bp$out
+```
+En cuanto al número de hijos, tampoco encontramos ninguna observación que resulte atípica o extrema.
+
+```{r}
+# Boxplot variable children
+children.bp <- boxplot(dataset$children)
+```
+
+
+Por último, en la variable charges encontramos un total de 139 valores outliers, esto supone más de un 10% del total de observaciones (1338), luego no contemplamos la eliminación de estos registros como un procedimiento adecuado para este caso. En su lugar, hemos llevado a cabo una investigación para conocer el coste promedio (individual y familiar) de un seguro médico en Estados Unidos. En este sentido, se tiene que, en el transcurso de un año, el gasto promedio en seguro médico para una familia de cuatro miembros en los EEUU Fue de 25011 dólares en 2020 [3], mientras que este mismo gasto para una persona es de 11582 dólares [4]. Sin embargo, estas cuantías varían en función de la edad y otras condiciones del contratante del seguro. 
+
+
+En consecuencia de lo anterior y observando que la variable charges es asimétrica hacia la izquierda (ver histograma a continuación), en nuestra investigación tomamos la decisión de considerar como valor atípico aquellos cargos que superen la cuantía de 30000 dólares, pues entendemos que casos extremos como un cargo total de 63770.43 dólares (máximo registrado para esta variable) son situaciones inusuales que no corresponden con una tarifa promedio de este tipo de seguros y que puede deberse a numerosas particularidades del contratante en sí, de modo que, si incluímos este tipo de valores en nuestras pruebas estadísticas, los resultados se verán altamente influenciados y sesgados. 
+
+Por lo tanto, procedemos a imputar aquellos valores superiores a 30000 dólares de dos formas distintas: por la mediana de la variable y usando el algoritmo MissForest. 
+
+Destacar que la elección de esta medida de tendencia central para la imputación se debe a la afectación que sufre la media de charges (13270.42) frente a la presencia de estos valores extremos. Por este motivo, creemos más conveniente imputar los valores outliers a través de la mediana (9382.033). Por otra parte, dado que tratamos con datos mixtos, el algoritmo MissForest es adecuado para este caso.
+
+```{r}
+# Boxplot variable Charges
+charges.bp <- boxplot(dataset$charges)
+charges.bp$out
+
+# Número de outliers
+length(c(charges.bp$out))
+
+# Histograma para estudiar la distribución de valores de charges.
+hist(dataset$charges)
+```
+Comenzamos con la imputación por medio de MissForest, para ello, trataremos los valores superiores a 30000 dólares como valores perdidos que serán imputados empleando el algoritmo Missforest basándonos en las variables age, bmi, children y charges:
+
+```{r}
+# Imputación de outliers por Missforest.
+
+# Convertimos en NAs los valores considerados como outliers.
+dataset <- dataset %>%
+mutate(charges_NA = case_when(charges > 30000 ~ NA_real_,
+                                      charges <= 30000 ~ charges))
+
+data_miss <- select(dataset, age, bmi, children, charges_NA)
+  
+# Estimamos los valores NAs creados.
+mf_dataset <- missForest(data_miss)
+
+# Añadimos al dataset la nueva columna charges con los NAs estimados por MissForest.
+dataset$charges_after_miss <- mf_dataset$ximp$charges_NA
+
+# Comprobación de la imputación
+hist(dataset$charges_after_miss)
+
+
+```
+Posteriormente, procedemos a la imputación de los valores extremos a través de la mediana:
+
+```{r}
+# Imputación de outliers por la mediana.
+dataset <- dataset %>%
+mutate(charges_imputacion_median = case_when(charges > 30000 ~ median(dataset$charges),
+                                      charges <= 30000 ~ charges))
+# Comprobación de la imputación.
+hist(dataset$charges_imputacion_median)
+```
+
+
+Referencias del apartado 2:
+
+**[3]** eHealthInsurance.com. "ACA Index Report on Unsubsidized Consumers in the 2020 Open Enrollment Period." Consultada en Mayo. 17, 2021.
+
+**[4]** CMS.gov. "National Health Expenditure Data, Historical." Consultada en Mayo. 17, 2021.
+
+# 4. Análisis de los datos.
+
+## 4.1. Selección de los grupos de datos que se quieren analizar/comparar (planificación de los análisis a aplicar).
+
+Llevaremos a cabo un total de tres análisis estadísticos distintos. En primer lugar, realizaremos un contraste de hipótesis con el objetivo de conocer si la media de los costes del seguro médico (variable charges) para las mujeres es significativamente mayor que la de los hombres, del mismo modo, realizaremos un contraste análogo pero para estudiar si el costo es mayor en personas fumadoras que en no fumadoras. En segundo lugar, también estudiaremos si existe diferencias de medias para la variable charges en función de la zona de residencia del contratante del seguro (variable region) a través de un ANOVA. Por último, trataremos de ajustar un modelo de regresión lineal que nos ayude a predecir el costo de un seguro médico (charges) en función de las características demográficas de la persona en cuestión (variables age, sex, smoker, bmi y children).
+
+De este modo, para la regresión y el ANOVA no debemos hacer una selección previa, pues a la hora de aplicar estos métodos estadísticos nombraremos directamente las variables necesarias para ello. No obstante, en el caso del contraste de hipótesis, debemos separar nuestra muestra original en cuatro submuestras: una de mujeres, otra de hombres, una de fumadores y otra de no fumadores. Por lo tanto, procedemos a realizar la selección de estas submuestras: 
+
+```{r}
+# Creación de submuestras para contraste de hipótesis.
+mujeres <- filter(dataset, sex == "female")
+hombres <-  filter(dataset, sex == "male")
+
+fumadores <- filter(dataset, smoker == "yes")
+nofumadores <-  filter(dataset, smoker == "no")
+```
+
+
+Otra acción que debemos realizar para llevar a cabo nuestro análisis de regresión será recodificar las variables cualitativas region, sex y smoker. Las recodificaciones a realizar serán las siguientes:
+
+sex: 0 = "male", 1 = "female".
+smoker: 0 = "no", 1 = "yes".
+region: 1 = "northeast". 2 = "southeast", 3 = "southwest", 4 = "northwest".
+
+Por tanto, procedemos a ello y a su posterior etiquetado:
+
+```{r}
+library(car)
+
+# Recodificación sex
+dataset$sex <- factor(case_when(
+                 dataset$sex == "male" ~ 0,
+                 dataset$sex == "female" ~ 1,
+                  ))
+
+levels(dataset$sex) <- c("male", "female")
+
+# Recodificación smoker
+dataset$smoker <- factor(case_when(
+                 dataset$smoker == "no" ~ 0,
+                 dataset$smoker == "yes" ~ 1,
+                  ))
+levels(dataset$smoker) <- c("no", "yes")
+
+# Recodificación region
+dataset$region <- factor(case_when(
+                        dataset$region == "northeast" ~ 1,
+                        dataset$region == "southeast" ~ 2,
+                        dataset$region == "southwest" ~ 3,
+                        dataset$region == "northwest" ~ 4))
+levels(dataset$region) <- c("northeast", "southeast", "southwest", "northwest")
+```
+
+
+
+## 4.2. Comprobación de la normalidad y homogeneidad de la varianza.
+
+Antes de aplicar las pruebas estadísticas mencionadas en el apartado anterior, realizaremos un estudio de la normalidad y homogeneidad de la varianza de las variables cuantitativas. Esto, nos ayudará a también a saber si las pruebas estadísticas planteadas pueden llevarse a cabo.
+
+En primer lugar, estudiaremos la normalidad de las variables cuantitativas a través del test de Kolmogorov-Smirnov (con la corrección Lilliefors), ya que contamos con un número de observaciones mayor a 50, y la visualización de gráficos QQ:
+
+```{r}
+# Test Kolmogorov-Smirnov (con la corrección Lilliefors) bmi
+lillie.test(dataset$bmi)
+
+# QQ plot bmi
+qqnorm(dataset$bmi)
+qqline(dataset$bmi, col = 2)
+
+# Test Kolmogorov-Smirnov (con la corrección Lilliefors) age
+lillie.test(dataset$age)
+
+# QQ plot age
+qqnorm(dataset$age)
+qqline(dataset$age, col = 2)
+
+
+# Test Kolmogorov-Smirnov (con la corrección Lilliefors) charges
+lillie.test(dataset$charges_imputacion_median)
+
+# QQ plot charges
+qqnorm(dataset$charges_imputacion_median)
+qqline(dataset$charges_imputacion_median, col = 2)
+
+# Test Kolmogorov-Smirnov (con la corrección Lilliefors) charges_after_miss
+lillie.test(dataset$charges_after_miss)
+
+# QQ plot charges_after_miss
+qqnorm(dataset$charges_after_miss)
+qqline(dataset$charges_after_miss, col = 2)
+
+
+# Test Kolmogorov-Smirnov (con la corrección Lilliefors) charges
+lillie.test(dataset$charges)
+
+# QQ plot charges
+qqnorm(dataset$charges)
+qqline(dataset$charges, col = 2)
+```
+
+
+A partir de los resultados gráficos y de los test calculados, es claro que las variables age y charges_imputation_median carecen de normalidad, pues los test de Kolmogorov-Smirnov han resultado significativos con p-valores menores al nivel de significación impuesto (0.05). Además, en los QQ plots para estas variables se detecta un claro desvío con respecto a un comportamiento normal, siendo este desvío más acusado en los extremos de dichos gráficos. También, es patente que, mediante la imputación realizada con MissForest, la variable charges_after_miss tiene una distribución más normalizada que la de charges_imputation_median, no obstante, sigue siendo no normal si nos basamos en el test de Kolmogorov-Smirnov. En general, observando la variable charges original (sin imputación) es claro que el carácter no normal se preserva con y sin imputación de valores.
+
+Por otra parte, la variable bmi carece de normalidad según el test de Kolmogorov-Smirnov, ya que el p-valor obtenido (0.03272) nos permite rechazar la hipótesis nula. Sin embargo, en la evaluación gráfica del QQ-plot correspondiente a esta variable, observamos que la mayoría de los cuantiles muestrales de esta variable son muy similares a los teóricos de la distribución normal, aunque en los extremos algunas observaciones se desvían del carácter normal. Pese a los resultados del test, consideraremos que la variable bmi es de carácter normal y entenderemos que el resultado del test puede haberse visto influenciado por los valores outliers no tratados en el apartado anterior. Así, concluímos que las variables age y charges_imputation carecen de normalidad, mientras que la variable bmi se distribuye normalmente.
+
+Llegados a este punto, debemos realizar una correción en el planteamiento de los análisis hechos anteriormente dada la condición de no normalidad de la variable charges. En este sentido, como esta variable continua carece de normalidad, esto no nos permite cumplir uno de las hipótesis a tener en cuenta en un estudio ANOVA, por lo tanto, esta prueba estadística no puede llevarse a cabo. En su lugar, procederemos a llevar a cabo una prueba estadística no paramétrica, en particular, emplearemos el test de Kruskal-Wallis (equivalente no paramétrico del ANOVA).
+
+
+En segundo lugar, y con motivo de la no normalidad de las variables anteriores, procedemos a evaluar la homogeneidad de la varianza de las variables a través del test de Levene. Este test es más robusto y menos sensible cuando los datos se alejan de una distribución normal. Por ello, procedemos a usarlo para estudiar la homogeneidad de la varianza de las variables tomando como factor de agrupamiento la variable region, es decir, vamos a comprobar la homogeneidad de las varianzas entre las distintas regiones de procedencia de los individuos muestrales:
+
+```{r}
+# Test de Levene para charges
+
+  # charges_imputacion_median
+leveneTest(dataset$charges_imputacion_median, group = dataset$region)
+  # charges_after_miss
+leveneTest(dataset$charges_after_miss, group = dataset$region)
+  # charges (sin imputación)
+leveneTest(dataset$charges, group = dataset$region)
+```
+
+En base a los resultados obtenidos , los test de Levene para charges_imputacion_median y charges_after_miss han resultado no significativos, pues el p-valor obtenido en ambos test es mayor al nivel de significación impuesto (0.05) y, por tanto, no podemos rechazar la hipótesis nula. En consecuencia, no podemos asegurar que existan diferencias significativas en las varianzas de al menos dos de los grupos comparados. Por el contrario, para la variable original charges, se obtiene un test significativo (p-valor = 0.0008611 < 0.05), esto nos indica que existen diferencias significativas en las varianzas entre al menos dos grupos. 
+
+
+```{r}
+# Test de Levene para age
+leveneTest(dataset$age, group = dataset$region)
+
+# Test de Levene para bmi
+leveneTest(dataset$bmi, group = dataset$region)
+```
+
+En cuanto a la variable bmi, hemos detectado heterocedasticidad entre al menos un par de regiones pues, en este caso, el test de Levene es significativo y rechazamos la hipótesis nula con un nivel de confianza del 95%. Finalmente, para la variable edad el test de Levene es no significativo y, por ende, no rechazamos la hipótesis nula del test.
+
+## 4.3. Aplicación de pruebas estadísticas para comparar los grupos de datos. En función de los datos y el objetivo del estudio, aplicar pruebas de contraste de hipótesis, correlaciones, regresiones, etc. Aplicar al menos tres métodos de análisis diferentes
+
+### 1. Contraste de hipótesis.
+
+Comenzaremos este apartado del informe llevando a cabo un contraste de hipótesis que nos permita responder a la siguiente pregunta: ¿la media de los costes del seguro médico  para las mujeres es significativamente mayor que la de los hombres?
+
+Procedemos a realizar un contraste de hipótesis asumiendo las siguientes hipótesis nula e hipótesis alternativa:
+
+$$H_{0}: \mu_{1} = \mu_{2}$$
+$$H_{0}: \mu_{1} > \mu_{2}$$
+siendo $\mu_{1}$ la media de la variable charges_imputation_median en la población de mujeres y $\mu_{2}$ la media de esta misma variable pero en la población de hombres.
+
+El tipo de contraste que vamos a realizar es un contraste para dos muestras independientes. Además, aunque la variable charges_imputation_median no es una variable normal, debemos tener en cuenta que contamos con dos muestras cuyo número de individuos es mayor a 30 (662 para mujeres y 676 para hombres), por lo tanto, el Teorema Central del Límite nos permite asumir normalidad en la distribución de la media muestral de la variable charges_imputation. A su vez, se asumirán desconocidas las desviaciones típicas poblacionales y se asume homocedasticidad, puesto que el test de Levene planteado a continuación resulta ser no significativo y, por ende, no podemos rechazar la hipótesis nula, es decir, no existen diferencias significativas entre las varianzas para la muestra de mujeres y hombres.
+
+```{r}
+# Test de Levene para charges_imputacion_median
+leveneTest(dataset$charges_imputacion_median, group = dataset$sex)
+```
+Por lo tanto, procedemos a calcular el contraste de hipótesis unilateral planteado:
+
+```{r}
+# Contraste de hipótesis 1
+test_hip <- t.test( mujeres$charges_imputacion_median,
+                    hombres$charges_imputacion_median,
+                    paired=FALSE, alternative="greater"); test_hip
+```
+Dado que se obtiene un p-valor de 0.06952, es decir, un valor mayor que 0.05, siendo 0.05 el nivel de significación impuesto, se tiene que no podemos rechazar la hipótesis nula. En consecuencia, podemos afirmar, con un nivel de confianza del 95%, que no es cierto que las mujeres tienen un coste medio mayor del seguro médico en comparación con los hombres.
+
+Ahora, realizaremos este mismo test en base a la variable charges_after_miss y charges. No obstante, como veremos a continuación, no podemos asumir homocedasticidad en el caso de usar la variable original charges, pues el test de Levene en este caso es significativo y, por ello, podemos asegurar que existe una diferencia significativa entre las varianzas de charges en hombres y mujeres. De este modo, en el caso de charges_after_miss haremos un test análogo al anterior, mientras que con charges asumiremos diferencia de varianzas (heterocedasticidad).
+
+
+```{r}
+# Test de Levene para charges_after_miss
+leveneTest(dataset$charges_after_miss, group = dataset$sex)
+
+# Test de Levene para charges
+leveneTest(dataset$charges, group = dataset$sex)
+
+```
+Así, procedemos a realizar el contraste de hipótesis pero con la variable charges imputada mediante MissForest y la variable charges original:
+
+```{r}
+# Contraste de hipótesis charges_after_miss
+test.hip2 <- t.test( mujeres$charges_after_miss,
+                     hombres$charges_after_miss,
+                     paired=FALSE,
+                     alternative="greater"); test.hip2
+
+# Contraste de hipótesis charges
+test.hip3 <- t.test( mujeres$charges,
+                     hombres$charges,
+                     paired=FALSE,
+                     alternative="greater",
+                     var.equal=FALSE); test.hip3
+```
+Ahora, se tiene que el test ha resultado no significativo para el caso de la variable original charges, pues se ha obtenido un p-valor = 0.9821. Por el contrario, el test de hipótesis realizado con la variable imputada por MissForest ha resultado significativo con un p-valor = 0.04225 (< 0.05), esto implica que podemos rechazar la hipótesis nula en este caso y asegurar, con un nivel de confianza del 95%, que el coste medio de un seguro de salud privado para las mujeres es mayor que para los hombres.
+
+
+Por otro lado, también podemos plantear ahora otro contraste de hipótesis que nos permita responder a la siguiente pregunta: ¿la media de los costes del seguro médico  para personas fumadoras es significativamente mayor que la de personas no fumadoras?
+
+Para ello, analicemos nuevamente las diferencias entre las varianzas de la variable charges ( y sus imputaciones) en los diferentes grupos (fumadores y no fumadores)
+
+```{r}
+# Test de Levene para charges_imputacion_median
+leveneTest(dataset$charges_imputacion_median, group = dataset$smoker)
+
+# Test de Levene para charges_after_miss
+leveneTest(dataset$charges_after_miss, group = dataset$smoker)
+
+# Test de Levene para charges
+leveneTest(dataset$charges, group = dataset$smoker)
+```
+En los tres casos, se obtienen resultados significativos, por tanto, asumiremos heterocedasticidad a la hora de realizar los siguientes contrastes de hipótesis:
+
+```{r}
+# Contraste de hipótesis charges
+test.hip4 <- t.test( fumadores$charges,
+                     nofumadores$charges,
+                     paired=FALSE,
+                     alternative="greater",
+                     var.equal=FALSE); test.hip4
+
+# Contraste de hipótesis charges_imputacion_median
+test.hip5 <- t.test( fumadores$charges_imputacion_median,
+                     nofumadores$charges_imputacion_median,
+                     paired=FALSE,
+                     alternative="greater",
+                     var.equal=FALSE); test.hip5
+
+# Contraste de hipótesis charges_after_miss
+test.hip6 <- t.test( fumadores$charges_after_miss, 
+                     nofumadores$charges_after_miss,
+                     paired=FALSE,
+                     alternative="greater",
+                     var.equal=FALSE); test.hip6
+```
+Finalmente, en los tres contrastes planteados, se han obtenido p-valores menores al nivel de significación impuesto (0.05), en consecuencia, podemos rechazar la hipótesis nula y asegurar, con un nivel de confianza del 95%, que el coste del seguro es mayor en personas fumadoras con respecto a personas no fumadoras.
+
+### 2 Test de Kruskal-Wallis.
+
+Como comentamos en apartados anteriores, la segunda prueba que realizaremos será un Test de Kruskal-Wallis en sustitución del ANOVA planteado inicialmente. Esto se debe a la falta de normalidad, en general, de la variable charges, lo cual, nos obliga a realizar una prueba no paramétrica como esta. El objetivo que nos planteamos con esta prueba es detectar si existen diferencias en la mediana de la variable charges_after_miss entre las distintas regiones existentes en nuestra población. Con ello, lo que tratamos de estudiar es si el costo de un seguro médico privado difiere en función del lugar de residencia del contratante de dicho servicio.
+
+Dentro de las condiciones necesarias que deben cumplirse para llevar a cabo el Test de Kruskal-Wallis, ya hemos verificado la existencia de homocedasticidad de la variable charges_after_miss en los distintos grupos que conforma la variable region (northeast, northwest, southeast y southwest), pues debemos recordar que el test de Levene pertinente fue no significativo. Este hecho podemos intuirlo también reflejado en el siguiente diagrama de cajas a partir del tamaño de la caja y bigotes:
+
+```{r}
+library(ggplot2)
+
+# Boxplot de la variable charges_after_miss por cada región.
+ggplot(data = dataset, mapping = aes(x = region, y = charges_after_miss, colour = region)) +
+    geom_boxplot() +
+    theme_bw() +
+    theme(legend.position = "none")
+```
+Nota: Cabe destacar que, debido a la posible heterocedasticidad detectada de la variable charges en, al menos dos grupos de la variable region, no podemos llevar a cabo esta prueba con dicha variable pues no cumple una de las condiciones necesarias para su aplicación. Por tanto, hemos decidido llevarla a cabo con la imputación de charges por medio del algoritmo MissForest ya que la imputación por la mediana parece no ser adecuada.
+
+
+Por otro lado, para llevar a cabo este test también debe cumplirse que la distribución de la variable, en nuesto caso charges_after_miss, sea la misma para cada grupo, es decir, que los datos provienen de la misma distribución. Por lo tanto, procedemos a verificar esta condición gráficamente mediante la realización de histogramas de esta variables para cada categoría de la variable region:
+
+
+```{r}
+# Histogramas de la variable charges_after_miss por cada región.
+ggplot(data = dataset, mapping = aes(x = charges_after_miss, colour = region)) +
+    geom_histogram() +
+    theme_bw() +
+    facet_grid(. ~ region) +
+    theme(legend.position = "none")
+```
+Así, observamos que efectivamente  tiene una distribución asimétrica hacia la izquierda en cada una de las categorías de region (northeast, northwest, southeast y southwest).
+
+Antes de llevar a cabo la prueba, debemos definir las hipótesis nulas e hipótesis alternativa de esta prueba estadística. En este sentido se tiene lo siguiente:
+
+$H_{0}$: Igualdad de medianas (todas las muestras provienen de la misma población)\break
+
+
+$H_{1}$: Existe diferencias entre alguna de las medianas (Al menos una muestra proviene de una población con una distribución distinta)
+
+Finalmente, procedemos a realizar el cálculo del test:
+ 
+```{r}
+# Test de de Kruskal-Wallis.
+kruskal.test(charges_after_miss ~ region, data = dataset)
+```
+
+Como se obtiene un p-valor = 0.03651 (< 0.05) podemos rechazar la hipótesis nula y afirmar que las diferencias entre algunas de las medianas son estadísticamente significativas, es decir, existe significancia en la diferencia entre, almenos, dos grupos de la variable region. 
+
+Dado que el test de Kruskal-Wallis ha detectado diferencias significativas en almenos dos grupos, vamos a realizar una comparación a posteriori dos a dos para conocer qué grupos difieren. Por tanto, llevamos a cabo un Test de Dunn entre cada par de grupos con corrección de significancia, en este caso, esta correción será la de Bonferroni:
+
+
+```{r}
+library(FSA)
+# Test de Dunn por pares de grupos (Correción de Bonferroni).
+dunnTest(charges_after_miss ~ region,
+         data=dataset,
+         method="bonferroni")
+```
+
+Contrariamente a lo obtenido en el Test de Kruskal-Wallis, en estas comparaciones dos a dos no se evidencian diferencias significativas, pues los p-valores ajustados por la correción de Bonferroni son superiores a 0.05. Esto puede deberse a que este ajuste de Bonferroni es muy conservador. En consecuencia, si nos fijamos en los p-valores sin ajustar, en este caso, sí se detectan diferencias significativas, concretamente,  entre las regiones northeast y southeast (p-valor = 0.01910961 < 0.05) y entre las regiones northeast y southwest (p-valor = 0.01011822 < 0.05).
+
+### 3 Modelo de regresión lineal.
+
+En primer lugar, realicemos un análisis de correlaciones para conocer qué relación existe entre la variable dependiente charges y el resto de variables. En este caso, dado que charges no tiene carácter normal, decidimos calcular el coeficiente de correlación de Spearman.
+
+```{r}
+matriz_correlacion <- as.matrix(cor(select(dataset, age, children, bmi, charges,
+                                           charges_imputacion_median, charges_after_miss),
+                                    method = "spearman"))
+corrplot(matriz_correlacion , method = "number")
+```
+Obviando la alta, y lógica, correlación entre charges y sus variantes imputadas, parece ser que la mayor correlación se establece entre la variable age y charges_after_miss siendo ésta positiva y con un valor de 0,68 (0,62 en el caso de charges_imputacion_median). Para el resto de variables, parece no existir un alto grado de correlación.  
+
+De este modo, primero calcularemos el modelo de regresión lineal con todos los predictores demográficos que tenemos en el dataset. Posteriormente, analizaremos la significancia de estas variables predictoras para decidir cuáles mantenemos en el modelo.
+
+
+```{r}
+# Predictores cuantitativos.
+edad <- dataset$age
+IMC <- dataset$bmi
+hijos <- dataset$children
+
+# Predictores cualitativos.
+sexo <- dataset$sex
+fumador <- dataset$smoker
+region <- dataset$region
+
+# Variable dependiente.
+coste.seguro <- dataset$charges_imputacion_median
+
+# Modelos de regresión lineal (imputacion con mediana).
+modelo1 <- lm(coste.seguro ~ edad + IMC + hijos + sexo + region + 
+    fumador , data = dataset)
+summary(modelo1)
+```
+
+Así, se observa que todas las variables agregadas al modelo son significativas. También cabe destacar que, dentro de las categorías de region, southwest resulta ser significativamente importante para el precio del seguro de salud. De este modo, observamos un bajo coeficiente de determinación ajustado (0.4271), el cual indica que nuestro modelo de regresión lineal explica tán solo el 42.71% de la varianza de las observaciones. Este hecho nos demuestra que no es un modelo muy potente a la hora de explicar la relación entre el costo del seguro y las variables predictoras.
+
+El hecho de obtener un coeficiente de regresión ajustado tan bajo nos hace sospechar de la influencia que tiene la imputación de la variable mediante la mediana. Por ello, tratamos de realizar el mismo modelo pero, en este caso, tomando como variable dependiente a charges_after_miss, es decir, tomando la variable charges con los valores extremos imputados por medio del algoritmo MissForest.
+
+```{r}
+# Modelo de regresión lineal (imputacion con MissForest)
+
+# Variable dependiente.
+coste.seguro <- dataset$charges_after_miss
+modelo2 <- lm(coste.seguro ~ edad + IMC + hijos + sexo + fumador + region, data = dataset)
+summary(modelo2)
+```
+
+De este modo, observamos que ha mejorado levemente el valor del coeficiente de determinación ajustado, sin embargo, sigue siendo un valor muy bajo para considerar este modelo como un buen modelo.
+
+Estos resultados obtenidos para el coeficiente de determinación ajustado en ambos modelos nos hacen plantearnos que las imputaciones llevadas a cabo anteriormente para los valores outliers estén influyendo negativamente en el poder explicativo de nuestro modelo de regresión. En consecuencia, vamos a ajustar el mismo modelo pero teniendo en cuenta la variable original charges manteniendo los valores outliers (sin imputación).
+
+
+```{r}
+# Modelo de regresión lineal sin imputación de outliers.
+
+# Variable dependiente.
+coste.seguro <- dataset$charges
+
+# Modelo de regresión lineal.
+modelo3 <- lm(coste.seguro ~ edad + IMC + hijos + sexo + fumador + region, data = dataset)
+summary(modelo3)
+
+
+
+```
+En este caso, el modelo generado ha mejorado considerablemente, pues el coeficiente de determinación ha aumentado su valor hasta 0.7494, es decir, ahora nuestro modelo tiene la capacidad de explicar el 74,94% de la variabilidad de las observaciones. En este sentido, podemos decir que el tercer modelo es un buen modelo para predecir el costo de un seguro en base a las variables demográficas empleadas.
+
+Esta mejoría experimentada en el último modelo evidencia la influencia negativa de las imputaciones realizadas en apartados anteriores a la hora de ajustar el modelo de regresión lineal. Por tanto, para evitar estos efectos vamos a elegir este modelo como el más adecuado de los tres y de referencia en esta actividad.
+
+
+A continuación, procedemos a validar el  tercer modelo por medio de la técnica K-fold Cross Validation, tomando k = 10 grupos. Para llevar a cabo esta validación, usaremos la función train() del paquete caret:
+
+
+```{r}
+ # Definimos el método, el valor de k y las repeticiones.
+set.seed(123)
+train.control <- trainControl(method = "repeatedcv", 
+                              number = 10, repeats = 5)
+
+# Entrenamiento del modelo con 10-fold Cross Validation.
+kfold_val <- train(charges ~ age +bmi + children + sex + smoker + region,
+               data = dataset,
+               method = "lm",
+               trControl = train.control)
+
+# Resultados del entrenamiento.
+print(kfold_val)
+```
+
+Cómo podemos observar, obtenemos un error cuadrático medio de 6071.342 dólares, lo cual supone un error alto a la hora de predecir el coste de un seguro médico con este modelo de regresión. Por tanto, no podemos considerar este modelo como un buen modelo predictor y su capacidad es meramente explicativa.
+
+
+
+# 5. Representación de los resultados a partir de tablas y gráficas.
+
+Primeramente, presentamos la siguiente tabla en la que se exponen los resultados obtenidos en el primer contraste de hipótesis realizado, en el cual, estudiamos si exístia diferencia significativa entre las medias de la variable coste del seguro para hombres y mujeres:
+
+```{r}
+# Contenido de la tabla 1.
+contenido.t1 <- data.frame("Estadístico" = c(test_hip$statistic,
+                                             test.hip2$statistic,
+                                             test.hip3$statistic),
+                        
+                           "P-valor" = c(test_hip$p.value,
+                                         test.hip2$p.value,
+                                         test.hip3$p.value),
+                    
+                           "Nivel de Confianza" = c("95%",
+                                                 "95%",
+                                                 "95%"),
+                                               
+                           "Significación" = c("0.05",
+                                              "0.05",
+                                              "0.05"))
+
+# Generamos la tabla con los resultados.
+knitr::kable(contenido.t1, digits = 4, align = "c",
+caption = "Resultados test de hipótesis: Diferencias de medias en el coste del seguro por género." )
+```
+
+Ahor, presentamos una tabla análoga en la que se exponen los resultados obtenidos en el segundo contraste de hipótesis realizado, en el cual, estudiamos si exístia diferencia significativa entre las medias de la variable coste del seguro para fumadores y no fumadores:
+
+
+```{r}
+# Contenido de la tabla 2.
+contenido.t2 <- data.frame("Estadístico" = c(test.hip4$statistic,
+                                             test.hip5$statistic,
+                                             test.hip6$statistic),
+                        
+                           "P-valor" = c(test.hip4$p.value,
+                                         test.hip5$p.value,
+                                         test.hip6$p.value),
+                           
+                           "Nivel de Confianza" = c("95%",
+                                                 "95%",
+                                                 "95%"),
+                                               
+                           "Significación" = c("0.05",
+                                              "0.05",
+                                              "0.05"))
+
+# Generamos la tabla con los resultados.
+knitr::kable(contenido.t2, digits = 104, align = "c",
+caption = "Resultados test de hipótesis: Diferencias de medias en el coste del seguro por condición de fumador." )
+```
+
+
+En segundo lugar, llevamos a cabo un test de Kruskal Wallis para comprobar si existían diferencias en la variable charges_after en función de la región del individuo. A continuación, realizamos un gráfico de barras en el que mostramos las diferencias existentes y, también, evidenciamos aquellas regiones en las que encontramos diferencias con respecto al valor del seguro médico: northeast - southeast (color rojo) y northeast - southwest (color rosa).
+
+
+```{r}
+# Gráfico de las diferencias del coste del seguro por región.
+
+# Cálculo de la media y desviación típica de charges_imputacion_median por región.
+med.charges<-ddply(dataset,.(region), summarize, mean=mean(charges_after_miss))
+sd.charges<-ddply(dataset,.(region), summarize, sd=sd(charges_after_miss))
+
+# Barras del gráfico basado en las medias de charges_imputacion_median en función de la región.
+BARRAS<-barplot(med.charges$mean, axes=TRUE,axisname=FALSE, ylim=c(0,25000),
+        col=c("yellow", "cyan", "green", "blue"),
+        main=" Resultados Kruskall-Wallis: Diferencias Charges según región",
+        xlab="Region", ylab="Charges")
+axis(1,labels=c("northeast", "southeast", "southwest", "northwest"), at=BARRAS)
+axis(2,at=seq(0,100,by=10))
+
+#Segemtnos de errores
+segments(BARRAS-0.1,med.charges$mean-sd.charges$sd,BARRAS+0.1,med.charges$mean-sd.charges$sd,lwd=2)
+segments(BARRAS-0.1,med.charges$mean+sd.charges$sd,BARRAS+0.1,med.charges$mean+sd.charges$sd,lwd=2)
+segments(BARRAS,med.charges$mean-sd.charges$sd,BARRAS,med.charges$mean+sd.charges$sd,lwd=2)
+
+# Etiquetas de las regiones que difieren.
+text(1.9,17000,labels="*",cex=4, col = "red")
+text(0.6,18000,labels="*",cex=4, col = "red")
+text(0.8,18000,labels="*",cex=4, col = "violet")
+text(3.1,15500,labels="*",cex=4, col = "violet")
+```
+
+En tercer lugar, procedimos a ajustar tres modelos de regresión lineal estableciendo como variable dependiente el costo del seguro médico y, como predictoras, el resto de variables de carácter sociodemográfico que teníamos en el dataset. Así, en el primer modelo se tuvo encuenta la variable charges imputada por la mediana para los valores outliers. En el segundo modelo, se tuvo en cuenta la variable charges imputada empleando el algoritmo MissForest y, por último, para estudiar la posible influencia de ambas imputaciones, se ajustó el modelo con la variable charges original. De este modo, se obtuvo una clara mejora en el coeficiente de determinación para este último modelo con respecto a los dos primeros, hecho que evidenció la influencia negativa que tenían ambas imputaciones sobre el carácter predictivo de nuestro modelo de regresión lineal.
+
+En la siguiente tabla, se exponen los coeficientes de determinación obtenidos en cada uno de los modelos comentados anteriormente. Así, se observa que el modelo con la variable imputada mediante MissForest mejora levemente el primer modelo con la variable imputada por la mediana, pues se obtiene un coeficiente de determinación igual a 0.4707. Finalmente, al realizar el modelo con la variable original, es evidente la mejoría pues el coeficiente de determinación para este tercer modelo es de 0.7509.
+
+
+```{r}
+# Contenido de la tabla 3.
+contenido.t3 <- data.frame("Modelo"=c("Modelo 1", "Modelo 2", "Modelo 3"),
+                           "Coef. Determinación" = c(summary(modelo1)$r.squared,
+                                                     summary(modelo2)$r.squared,
+                                                     summary(modelo3)$r.squared)
+                           
+                           )
+
+# Generamos la tabla con los resultados.
+knitr::kable(contenido.t3, digits = 4, align = "c",
+caption = "Coeficientes de determinación obtenidos en los distintos modelos" )
+```
+
+En consecuencia de lo anterior, decidimos que el tercer modelo era el mejor de los tres ajustados y procedimos a su evaluación mediante la técnica de remuestreo K-fold Cross Validation, tomando k = 10 grupos. De este modo, obtuvimos los siguientes valores para el RSME y MAE, los cuales evidenciaron que el modelo no es tan preciso a la hora de calcular el coste de un seguro, pues comete un error cuadrático medio de 6071.342 dólares.
+
+
+```{r}
+# Contenido de la tabla 4.
+contenido.t4 <- data.frame("Modelo"=c("Modelo 3"),
+                          "RSME" = c(as.numeric(kfold_val$results[2])),
+                          "RSME SD" = c(as.numeric(kfold_val$results[5])),
+                          "MAE" = c(as.numeric(kfold_val$results[4])),
+                          "MAE SD" = c(as.numeric(kfold_val$results[7]))
+                           )
+
+# Generamos la tabla con los resultados.
+knitr::kable(contenido.t4, digits = 4, align = "c",
+caption = "Resultados de validación mediante 10-fold Cross Validation" )
+```
+
+
+A continuación, se exponen los gráficos que nos permitirán analizar la viabilidad de nuestro tercer modelo, el cual fue elegido porque obtuvo el mayor coeficiente de determinación como vimos en la tabla 3. Por un lado, realizamos un QQ plot para determinar la normalidad en la distribución de los residuos y, por otro, un gráfico de los residuos vs los valores predichos por el modelo para analizar la existencia de homocedasticidad.
+
+
+De esta forma, en el QQ plot observamos que los residuos no se comportan de manera normal, mientras que en el gráfico de los residuos frente a los valores predichos podemos intuir cierta independencia en la distribución de puntos que nos hacen confirmar la presencia de homocedasticidad. 
+
+
+```{r}
+# Q-Q Plot
+qqnorm(modelo3$residuals)
+qqline(modelo3$residuals)
+
+# Gráfico Residuos vs Predichos
+ggplot(data = data.frame(predict_values = predict(modelo3),
+                         residuos = residuals(modelo3)),
+       aes(x = predict_values, y = residuos)) +
+    geom_point() +
+    geom_smooth(color = "firebrick", se = FALSE) +
+    geom_hline(yintercept = 0) +
+    theme_bw()
+```
+
+# 6. Resolución del problema. A partir de los resultados obtenidos, ¿cuáles son las conclusiones? ¿Los resultados permiten responder al problema?
+
+Tras realizar estas tres pruebas estadísticas procedemos a determinar las conclusiones extraídas de los resultados anteriormente expuestos. Así, el test de hipótesis realizado con la variable charges imputada mediante MissForest nos ha permitido afirmar, con un 95% de confianza, que  las mujeres tienen un coste medio mayor del seguro médico en comparación con los hombres. Asimismo, mediante los test de hipótesis posteriores, también pudimos asegurar que las personas fumadoras tienen un coste medio mayor del seguro médico en comparación con las no fumadoras con el mismo nivel de confianza.
+
+Por otro lado, a partir de los resultados obtenidos en el test de Kruskal Wallis hemos sido capaces de estudiar la existencia, o no, de diferencias significativas en el coste medio de un seguro de salud privado en función del lugar de residencia del contratante, obteniendo que efectivamente se encuentran diferencias. Posteriormente, hemos detectado que dichas diferencias se encuentran entre dos pares de regiones: northeast - southeast y northeast - southwest.
+
+Finalmente, en cuanto al tercer modelo de regresión lineal múltiple ajustado, hemos obtenido un alto coeficiente de determinación, sin embargo, la condición de normalidad en la distribución de los residuos en dicho modelo no se verifica. Además, en la validación del modelo mediante K-fold cross-validation, obtuvimos un alto RSME, luego  estos hechos nos obligan a no considerar como válido el modelo, y, por tanto, no ha podido responder  a nuestra pregunta inicial en la que tratábamos de conocer una relación (válida y fiable) entre las variables demográficas del dataset elegido y el coste de un seguro privado de salud que permitiese predecir dicho coste. Debido a esto, debe realizarse otro tipo de modelo que se ajuste mejor a los datos y asegure el cumplimiento de las premisas necesarias, para que verificar su validez. Otra opción, sería continuar con el enfoque de la regresión lineal pero realizando una transformación logarítmica para tratar de normalizar las variables no normales.
+
+# 7. Código: Hay que adjuntar el código, preferiblemente en R, con el que se ha realizado la limpieza, análisis y representación de los datos. Si lo preferís, también podéis trabajar en Python.
+
+El código con el que se ha realizado la limpieza, análisis y representación de los datos se muestra en el prensete informe, aunque puede ser consultado en el siguiente link:
+
+[https://github.com/cherreracar/Practica2_Tipologia-.git/](https://github.com/cherreracar/Practica2_Tipologia-.git/)
+
+
+
+### Exportación de los datos analizados.
+
+```{r}
+write.csv(dataset, file="insurance_clean.csv")
+```
+
+
+
+![Tabla de contribuciones](C:\Users\cherr\Desktop\UOC\Segundo Semestre (Curso 20-21)\Ciclo y Tipología de los Datos\PRAC2\tabla_contribuciones)
+
